@@ -39,17 +39,29 @@ def main():
         action="store_true",
         help="요약하지 않고 추출한 원문 텍스트만 출력 (Claude API 불필요)",
     )
+    parser.add_argument(
+        "--cookies",
+        help="Netscape 형식 쿠키 파일 경로 (회원전용·비공개 영상 접근용)",
+    )
+    parser.add_argument(
+        "--cookies-from-browser",
+        help="브라우저에서 쿠키 자동 추출 (chrome/firefox/edge/safari 등). 회원전용·비공개 영상용",
+    )
     args = parser.parse_args()
+
+    auth_kwargs = dict(cookies=args.cookies, cookies_from_browser=args.cookies_from_browser)
+    title_auth = transcript_mod._auth_opts(args.cookies, args.cookies_from_browser)
 
     # 1) 텍스트 추출
     try:
-        title = transcript_mod.get_video_title(args.url)
+        title = transcript_mod.get_video_title(args.url, auth=title_auth)
         if title:
             print(f"영상 제목: {title}\n")
         text, source = transcript_mod.get_transcript(
             args.url,
             whisper_model=args.whisper_model,
             allow_whisper=not args.no_whisper,
+            **auth_kwargs,
         )
     except (ValueError, RuntimeError) as e:
         print(f"\n[오류] {e}", file=sys.stderr)

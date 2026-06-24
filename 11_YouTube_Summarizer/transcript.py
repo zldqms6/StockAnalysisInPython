@@ -17,6 +17,21 @@ import tempfile
 PREFERRED_LANGS = ["ko", "en"]
 
 
+def _auth_opts(cookies: str | None, cookies_from_browser: str | None) -> dict:
+    """회원전용·비공개 영상 접근을 위한 yt-dlp 인증(쿠키) 옵션을 만든다.
+
+    cookies              : Netscape 형식 쿠키 파일 경로
+    cookies_from_browser : 'chrome', 'firefox', 'edge' 등 브라우저 이름 (쿠키 자동 추출)
+    """
+    opts = {}
+    if cookies:
+        opts["cookiefile"] = cookies
+    if cookies_from_browser:
+        # yt-dlp는 (브라우저이름,) 형태의 튜플을 받는다.
+        opts["cookiesfrombrowser"] = (cookies_from_browser,)
+    return opts
+
+
 def extract_video_id(url: str) -> str:
     """다양한 형태의 유튜브 URL에서 11자리 영상 ID를 추출한다."""
     patterns = [
@@ -98,7 +113,7 @@ def _from_transcript_api(video_id: str):
 # ---------------------------------------------------------------------------
 # 2) yt-dlp 자막 파일 다운로드
 # ---------------------------------------------------------------------------
-def _from_ytdlp_subtitles(url: str):
+def _from_ytdlp_subtitles(url: str, auth: dict | None = None):
     """yt-dlp로 (자동)자막 파일을 받아 텍스트로 변환한다."""
     try:
         import yt_dlp
@@ -116,6 +131,7 @@ def _from_ytdlp_subtitles(url: str):
             "outtmpl": outtmpl,
             "quiet": True,
             "no_warnings": True,
+            **(auth or {}),  # 회원전용·비공개 영상용 쿠키 옵션
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -143,7 +159,7 @@ def _from_ytdlp_subtitles(url: str):
 # ---------------------------------------------------------------------------
 # 3) yt-dlp 오디오 다운로드 + faster-whisper 음성인식
 # ---------------------------------------------------------------------------
-def _from_audio_whisper(url: str, whisper_model: str = "base"):
+def _from_audio_whisper(url: str, whisper_model: str = "base", auth: dict | None = None):
     """오디오를 받아 faster-whisper로 음성→텍스트 변환한다 (자막이 전혀 없을 때)."""
     try:
         import yt_dlp
@@ -158,6 +174,7 @@ def _from_audio_whisper(url: str, whisper_model: str = "base"):
             "outtmpl": outtmpl,
             "quiet": True,
             "no_warnings": True,
+            **(auth or {}),  # 회원전용·비공개 영상용 쿠키 옵션
             # ffmpeg가 있으면 mp3로 변환, 없으면 원본 오디오를 그대로 사용
             "postprocessors": [
                 {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}
@@ -186,45 +203,67 @@ def _from_audio_whisper(url: str, whisper_model: str = "base"):
         return text or None
 
 
-def get_video_title(url: str) -> str:
+def get_video_title(url: str, auth: dict | None = None) -> str:
     """yt-dlp 메타데이터에서 영상 제목을 가져온다 (요약 품질 향상용 컨텍스트)."""
     try:
         import yt_dlp
     except ImportError:
         return ""
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True, **(auth or {})}
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             return info.get("title", "") or ""
     except Exception:
         return ""
 
 
-def get_transcript(url: str, whisper_model: str = "base", allow_whisper: bool = True):
+def get_transcript(
+    url: str,
+    whisper_model: str = "base",
+    allow_whisper: bool = True,
+    cookies: str | None = None,
+    cookies_from_browser: str | None = None,
+):
     """폴백 체인을 순서대로 실행해 (텍스트, 추출방법) 튜플을 반환한다.
+
+    cookies / cookies_from_browser 를 주면 회원전용·비공개 영상도
+    로그인된 계정 권한으로 접근을 시도한다.
 
     실패 시 RuntimeError를 던진다.
     """
     video_id = extract_video_id(url)
+    auth = _auth_opts(cookies, cookies_from_browser)
+    authed = bool(auth)
 
-    print("[1/3] youtube-transcript-api로 자막 확인 중...")
-    text = _from_transcript_api(video_id)
-    if text:
-        return text, "youtube-transcript-api (자막)"
+    # transcript-api는 인증을 지원하지 않으므로, 쿠키가 있으면 yt-dlp부터 시작한다.
+    if not authed:
+        print("[1/3] youtube-transcript-api로 자막 확인 중...")
+        text = _from_transcript_api(video_id)
+        if text:
+            return text, "youtube-transcript-api (자막)"
+    else:
+        print("[1/3] 쿠키가 지정되어 transcript-api는 건너뜁니다 (인증 미지원).")
 
-    print("[2/3] yt-dlp로 자막 파일 다운로드 시도 중...")
-    text = _from_ytdlp_subtitles(url)
+    print("[2/3] yt-dlp로 자막 파일 다운로드 시도 중..." + (" (로그인 쿠키 사용)" if authed else ""))
+    text = _from_ytdlp_subtitles(url, auth=auth)
     if text:
         return text, "yt-dlp (자막 파일)"
 
     if allow_whisper:
         print("[3/3] 자막이 없어 오디오를 내려받아 음성인식(Whisper)을 시도합니다...")
-        text = _from_audio_whisper(url, whisper_model=whisper_model)
+        text = _from_audio_whisper(url, whisper_model=whisper_model, auth=auth)
         if text:
             return text, f"faster-whisper ({whisper_model} 음성인식)"
 
-    raise RuntimeError(
-        "자막/음성 어느 방법으로도 텍스트를 추출하지 못했습니다.\n"
+    hint = (
         "  - 영상에 자막이 없고 Whisper 의존성(faster-whisper, ffmpeg)이 없을 수 있습니다.\n"
         "  - requirements.txt를 설치했는지, 영상이 비공개/지역제한은 아닌지 확인해 주세요."
     )
+    if not authed:
+        hint += (
+            "\n  - 회원전용·비공개·연령제한 영상이라면 로그인 쿠키가 필요합니다:\n"
+            "      --cookies-from-browser chrome   (브라우저에서 자동 추출)\n"
+            "      --cookies cookies.txt           (쿠키 파일 지정)"
+        )
+    raise RuntimeError("자막/음성 어느 방법으로도 텍스트를 추출하지 못했습니다.\n" + hint)

@@ -49,7 +49,21 @@ python youtube_summarizer.py URL --no-whisper
 
 # 요약 없이 추출된 원문만 출력 (Claude API 불필요)
 python youtube_summarizer.py URL --transcript-only
+
+# 회원전용·비공개·연령제한 영상 (로그인 쿠키 필요)
+python youtube_summarizer.py URL --cookies-from-browser chrome
+python youtube_summarizer.py URL --cookies cookies.txt
 ```
+
+## 회원전용 / 비공개 / 연령제한 영상
+
+이런 영상은 로그인이 없으면 자막·오디오 접근이 막혀서 추출이 실패합니다.
+**본인이 로그인한 계정의 쿠키**를 넘겨주면, 그 계정으로 볼 수 있는 영상은 처리할 수 있습니다.
+
+- `--cookies-from-browser chrome` : 설치된 브라우저(chrome/firefox/edge/safari 등)에서 쿠키를 자동으로 꺼내 씁니다. 가장 편합니다.
+- `--cookies cookies.txt` : Netscape 형식 쿠키 파일을 직접 지정합니다. (브라우저 확장 프로그램 "Get cookies.txt" 등으로 내보낼 수 있음)
+
+> ⚠️ 쿠키는 곧 로그인 자격 증명입니다. 파일을 공유하거나 깃에 커밋하지 마세요. 본인이 볼 권한이 있는 영상에만 사용하세요.
 
 ## 옵션
 
@@ -60,6 +74,8 @@ python youtube_summarizer.py URL --transcript-only
 | `--whisper-model` | `tiny`/`base`/`small`/`medium`/`large-v3` 중 선택 (기본 `base`) |
 | `--no-whisper` | 자막 없을 때 음성인식 생략 |
 | `--transcript-only` | 요약 없이 원문 텍스트만 출력 |
+| `--cookies-from-browser` | 브라우저에서 쿠키 자동 추출 (회원전용·비공개 영상용) |
+| `--cookies` | Netscape 형식 쿠키 파일 경로 (회원전용·비공개 영상용) |
 
 ## 파일 구성
 
